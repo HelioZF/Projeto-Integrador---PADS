@@ -1,0 +1,16 @@
+Alforitimo de tesolução do projeto de integração
+------------------------------------------------
+1. realizar a limpeza dos dados seguindo o pdf
+
+2. Analisar o problema e começar o tratamento dos dados
+	1.1 definir a variável resposta do problema
+	1.2 definir o tipo do problema e quais modelos podem ser utilizados 
+
+3. Criar um arquivo csv com os dados limpos para utiliza-los no R
+
+4. Importar os dados no R e realizar o treinamento do modelo escolhido (ou dos modelos escolhidos)
+
+5. Analisar os resultados de cada modelo, bem como possíveis implementações
+
+6. Realizar um processo de realimentação para melhorar a qualidade do classificador
+ 	5.1 fazer isso em loop até a exaustão total ou até um resultado satisfatório
