@@ -17,138 +17,178 @@ set.seed(907)
 dados <- read.csv("dados_para_o_R.csv") # nolint
 head(dados)
 
-# C) ---------------------------------------------------------------------------
-dados |>
-  ggplot(aes(x = origin, y = sales, color = operates_within_2_years)) +
-  geom_point()
-
-# Criando uma tabela para comparar os modelos
-models_tibble <- tibble(modelo = c("lm", "ridge", "LASSO", 
+# criando tibble para comparar modelos:
+models_tibble <- tibble(modelo = c("glm", "ridge", "LASSO", 
                                    "Arv.Decisão", "Rd.Forest"),
-                        RQM = NA * length(modelo), RMSE = NA * length(modelo))
-
+                        Accuracy = NA * length(modelo), Precision = NA * length(modelo), ROC_Curve = NA * length(modelo))
 models_tibble
 
-# i) regressão linear ----------------------------------------------------------
+# criando uma função para realizar
 
-# Convertendo variáveis categóricas para fatores
-dados_reg <- dados %>%
-  mutate(across(where(is.character), as.factor))
+# Definindo a função para calcular as métricas e salvar no models_tibble
+adiciona_tabela <- function(modelo_nome, resultados, models_tibble) {
+  
+  # Calculando as métricas
+  accuracy_result <- accuracy(resultados, truth = truth, estimate = estimate)
+  precision_result <- precision(resultados, truth = truth, estimate = estimate)
+  roc_auc_result <- roc_auc(resultados, truth, .pred_1)
+  
+  # Atualizando a tabela models_tibble com os resultados
+  models_tibble$Accuracy[models_tibble$modelo == modelo_nome] <- accuracy_result$.estimate
+  models_tibble$Precision[models_tibble$modelo == modelo_nome] <- precision_result$.estimate
+  models_tibble$ROC_Curve[models_tibble$modelo == modelo_nome] <- roc_auc_result$.estimate
+  
+  # Retornando a tabela atualizada
+  return(models_tibble)
+}
 
-# Verificando variáveis com apenas um nível e removendo-as
-dados_modelo <- dados_reg %>%
-  select(where(~ n_distinct(.) > 1))
 
-glimpse(dados_modelo)
+# i) regressão logistica ----------------------------------------------------------
+
 # Separando o database em treino e teste
-split <- initial_split(dados_modelo, prop = 0.8)
+split <- initial_split(dados, prop = 0.8)
 
 treinamento <- training(split)
 teste <- testing(split)
 
-# Ajustando o modelo de regressão linear
-fit <- lm(operates_within_2_years ~ ., data = treinamento)
-summary(fit)
+# Ajustando o modelo de regressão logística
+fit <- glm(operates_within_2_years ~ ., data = treinamento, family = "binomial")
 
-# Avaliando o modelo
+# Fazendo previsões probabilísticas
+y_pred_prob <- predict(fit, newdata = teste, type = "response")
 
-y_pred <- predict(fit, newdata = teste)
-y_real  <- teste$operates_within_2_years
+# Convertendo as probabilidades em 0 ou 1 com base no limiar (sarrafo)
+y_pred <- as.factor(ifelse(y_pred_prob > sarrafo, 1, 0))
 
-# Criando um tibble com valores reais e previstos
+# Convertendo os valores reais em fator
+y_real <- as.factor(teste$operates_within_2_years)
+
+# Criando um tibble com os valores reais, previstos e as probabilidades
 resultados <- tibble(
-  truth = y_real,     # Valores reais
-  estimate = y_pred     # Valores previstos
+  truth = y_real,       # Valores reais
+  estimate = y_pred,    # Valores previstos
+  .pred_1 = y_pred_prob # Probabilidades previstas para a classe 1
 )
-# Calculando o R-quadrado (R²)
-rsq_result <- rsq(resultados, truth = truth, estimate = estimate)
-rmse_result <- rmse(resultados, truth = truth, estimate = estimate)
 
-models_tibble$RQM[models_tibble$modelo == "lm"] <- rsq_result$.estimate
-models_tibble$RMSE[models_tibble$modelo == "lm"] <- rmse_result$.estimate
-models_tibble
+models_tibble <- adiciona_tabela("glm", resultados, models_tibble)
 
 # ii) regressão ridge ----------------------------------------------------------
 
 # Separando os dados em treino e teste
-split <- initial_split(dados_modelo, prop = 0.8)
+split <- initial_split(dados, prop = 0.8)
 treinamento <- training(split)
 teste <- testing(split)
 
 # Convertendo as variáveis preditoras e resposta para matriz
-x_train <- model.matrix(operates_within_2_years ~ .,
-                        data = treinamento)[, -1] # Exclui a coluna de intercepto #nolint
+x_train <- model.matrix(operates_within_2_years ~ ., data = treinamento)[, -1]
 y_train <- treinamento$operates_within_2_years
 
 x_test <- model.matrix(operates_within_2_years ~ ., data = teste)[, -1]
 y_test <- teste$operates_within_2_years
 
 # Ajustando o modelo Ridge com glmnet
-ridge_model <- glmnet(x_train, y_train, alpha = 0)  # alpha = 0 para Ridge
+ridge_model <- glmnet(x_train, y_train, alpha = 0, family = "binomial")
+
 # Validação cruzada para encontrar o melhor lambda
-cv_ridge <- cv.glmnet(x_train, y_train, alpha = 0)
+cv_ridge <- cv.glmnet(x_train, y_train, alpha = 0, family = "binomial")
 
 # Obtendo o melhor lambda
 best_lambda <- cv_ridge$lambda.min
 cat("Melhor lambda:", best_lambda, "\n")
 
 # Fazendo previsões no conjunto de teste
-predicoes <- predict(cv_ridge, s = best_lambda, newx = x_test)
+y_pred_prob <- predict(ridge_model, s = best_lambda, newx = x_test, type = "response")
 
-# Calculando o RSQ para avaliar o modelo
-resultados <- tibble(truth = y_test, estimate = as.vector(predicoes))
+# Convertendo as probabilidades para vetor numérico
+y_pred_prob <- as.numeric(y_pred_prob)
 
-rsq_result <- rsq(resultados, truth = truth, estimate = estimate)
-rmse_result <- rmse(resultados, truth = truth, estimate = estimate)
+# Definindo o threshold (ajuste conforme necessário)
+sarrafo <- 0.5
 
-models_tibble$RQM[models_tibble$modelo == "ridge"] <- rsq_result$.estimate
-models_tibble$RMSE[models_tibble$modelo == "ridge"] <- rmse_result$.estimate
-models_tibble
+# Obtendo as previsões de classe com base no threshold
+y_pred <- as.factor(ifelse(y_pred_prob > sarrafo, 1, 0))
+
+# Valores reais das classes no conjunto de teste
+y_real <- as.factor(teste$operates_within_2_years)
+
+# Criando um tibble com os resultados
+resultados <- tibble(
+  truth = y_real,
+  estimate = y_pred,
+  .pred_1 = y_pred_prob
+)
+
+models_tibble <- adiciona_tabela("ridge", resultados, models_tibble)
+
+
 # iii) regressão LASSO ---------------------------------------------------------
 
 # ajustando o modelo
-lasso_model <- glmnet(x_train, y_train, alpha = 1) # alpha =1 para Lasso
+lasso_model <- glmnet(x_train, y_train, alpha = 1, family = "binomial") # alpha =1 para Lasso
 
 #enconrando o melhor lambda
-cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1)
+cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1, family = "binomial")
 best_lambda <- cv_lasso$lambda.min
 cat("Melhor lambda:", best_lambda, "\n")
 
 # Fazendo previsões no conjunto de teste
-predicoes <- predict(cv_lasso, s = best_lambda, newx = x_test)
+y_pred_prob <- predict(lasso_model, s = best_lambda, newx = x_test, type = "response")
 
-# Calculando o RSQ para avaliar o modelo
-resultados <- tibble(truth = y_test, estimate = as.vector(predicoes))
+# Convertendo as probabilidades para vetor numérico
+y_pred_prob <- as.numeric(y_pred_prob)
 
-rsq_result <- rsq(resultados, truth = truth, estimate = estimate)
-rmse_result <- rmse(resultados, truth = truth, estimate = estimate)
+# Definindo o threshold (ajuste conforme necessário)
+sarrafo <- 0.5
 
-models_tibble$RQM[models_tibble$modelo == "LASSO"] <- rsq_result$.estimate
-models_tibble$RMSE[models_tibble$modelo == "LASSO"] <- rmse_result$.estimate
+# Obtendo as previsões de classe com base no threshold
+y_pred <- as.factor(ifelse(y_pred_prob > sarrafo, 1, 0))
 
-models_tibble
+# Valores reais das classes no conjunto de teste
+y_real <- as.factor(teste$operates_within_2_years)
+
+# Criando um tibble com os resultados
+resultados <- tibble(
+  truth = y_real,
+  estimate = y_pred,
+  .pred_1 = y_pred_prob
+)
+
+models_tibble <- adiciona_tabela("LASSO", resultados, models_tibble)
 
 # iv) árvore de decisão ------------------------------------------
 library(rpart.plot)
-tree <- rpart(operates_within_2_years ~ ., data = treinamento, method = "anova")
-windows() + rpart.plot(tree, roundint = FALSE)
-windows() + plotcp(tree)
+tree <- rpart(operates_within_2_years ~ ., data = treinamento, method = "class")
 
+# Visualizando a árvore e o gráfico de CP
+windows()
+rpart.plot(tree, roundint = FALSE)
+windows()
+plotcp(tree)
+
+# Encontrando o CP ótimo e podando a árvore
 cp_ot <- tree$cptable[which.min(tree$cptable[, "xerror"]), "CP"]
-cp_ot
-
 tree <- prune(tree, cp = cp_ot)
-windows() + rpart.plot(tree, roundint = FALSE)
-tree_predict <- predict(tree, newdata = teste)
+windows()
+rpart.plot(tree, roundint = FALSE)
 
-resultados_arv_decisao <- tibble(truth = y_test, estimate = tree_predict)
-rsq_result <- rsq(resultados_arv_decisao, truth = truth, estimate = estimate)
-rmse_result <- rmse(resultados_arv_decisao, truth = truth, estimate = estimate)
+# Fazendo previsões no conjunto de teste
+y_pred_prob <- predict(tree, newdata = teste, type = "prob")[, 2]  # Probabilidade da classe 1
 
-models_tibble$RQM[models_tibble$modelo == "Arv.Decisão"] <- rsq_result$.estimate
-models_tibble$RMSE[models_tibble$modelo == "Arv.Decisão"] <- rmse_result$.estimate
+# Aplicando o threshold 'sarrafo' para obter as previsões de classe
+y_pred <- as.factor(ifelse(y_pred_prob > sarrafo, 1, 0))
 
-models_tibble
+# Convertendo os valores reais em fator
+y_real <- as.factor(teste$operates_within_2_years)
+
+# Criando o tibble de resultados
+resultados <- tibble(
+  truth = y_real,       # Valores reais
+  estimate = y_pred,    # Valores previstos
+  .pred_1 = y_pred_prob # Probabilidades previstas para a classe 1
+)
+
+# Calculando a AUC da curva ROC
+models_tibble <- adiciona_tabela("Arv.Decisão", resultados, models_tibble)
 
 # v) floresta aleatória
 library(ranger)
@@ -158,17 +198,26 @@ rd_forest_model <- ranger(
   data = treinamento,
   num.trees = 500,
   mtry = floor(sqrt(ncol(treinamento) - 1)),
-  importance = 'impurity', 
+  importance = 'impurity',
   seed = 123
 )
 
-predicoes_rd_forest <- predict(rd_forest_model, data = teste)$predictions
+# Fazendo previsões no conjunto de teste
+predictions <- predict(rd_forest_model, data = teste)
 
-resultados_rd_forest <- tibble(truth = y_test, estimate = predicoes_rd_forest)
-rsq_result_rd_forest <- rsq(resultados_rd_forest, truth = truth, estimate = estimate)
-rmse_result_rd_forest <- rmse(resultados_rd_forest, truth = truth, estimate = estimate)
+y_pred_prob <- predictions$predictions[, "1"]
 
-models_tibble$RQM[models_tibble$modelo == "Rd.Forest"] <- rsq_result_rd_forest$.estimate
-models_tibble$RMSE[models_tibble$modelo == "Rd.Forest"] <- rmse_result_rd_forest$.estimate
+y_pred <- as.factor(ifelse(y_pred_prob > sarrafo, 1, 0))
 
+y_real <- as.factor(teste$operates_within_2_years)
+
+resultados <- tibble(
+  truth = y_real,       # Valores reais
+  estimate = y_pred,    # Valores previstos
+  .pred_1 = y_pred_prob # Probabilidades previstas para a classe '1'
+)
+
+models_tibble <- adiciona_tabela("Rd.Forest", resultados, models_tibble)
+
+vip(rd_forest_model) + windows()
 models_tibble
