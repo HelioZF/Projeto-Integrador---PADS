@@ -28,6 +28,12 @@ models_tibble
 # Definindo a função para calcular as métricas e salvar no models_tibble
 adiciona_tabela <- function(modelo_nome, resultados, models_tibble) {
   
+  # Reordenando os níveis da variável 'truth'
+  resultados$truth <- factor(resultados$truth, levels = c("1", "0"))
+  # Reordenando os níveis da variável 'estimate' para corresponder a 'truth'
+  resultados$estimate <- factor(resultados$estimate, levels = c("1", "0"))
+
+  
   # Calculando as métricas
   accuracy_result <- accuracy(resultados, truth = truth, estimate = estimate)
   precision_result <- precision(resultados, truth = truth, estimate = estimate)
@@ -41,6 +47,7 @@ adiciona_tabela <- function(modelo_nome, resultados, models_tibble) {
   # Retornando a tabela atualizada
   return(models_tibble)
 }
+
 
 
 # i) regressão logistica ----------------------------------------------------------
