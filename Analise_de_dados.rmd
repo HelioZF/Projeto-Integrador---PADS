@@ -56,9 +56,9 @@ Criando uma função para adicionar os resultados das funções na tabela:
 adiciona_tabela <- function(modelo_nome, resultados, models_tibble) {
   
   # Reordenando os níveis da variável 'truth'
-  resultados$truth <- factor(resultados$truth, levels = c(1, 0))
+  #resultados$truth <- factor(resultados$truth, levels = c(1, 0))
   # Reordenando os níveis da variável 'estimate' para corresponder a 'truth'
-  resultados$estimate <- factor(resultados$estimate, levels = c(1, 0))
+  #resultados$estimate <- factor(resultados$estimate, levels = c(1, 0))
   
   # Calculando a matriz de confusão para FP e FN
   conf_matrix <- table(resultados$truth, resultados$estimate)
@@ -102,6 +102,8 @@ sarrafo <- 0.7
 ```
 
 Separando os dados em treino e teste e ordenando as variaveis resposta
+1 -> empresa continua operando
+0 -> empresa parou de operar
 ```{r}
 
 # Separando os dados em treino e teste
