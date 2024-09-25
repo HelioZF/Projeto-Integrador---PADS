@@ -1,3 +1,6 @@
+Carregando as bibliotecas do projeto
+
+```{r}
 # Carregando as bibliotecas
 library(tidyverse)
 library(pROC)
@@ -12,51 +15,108 @@ library(rpart)
 library(partykit)
 library(vip)
 set.seed(907)
+```
 
+Importando os dados
+
+```{r}
 #importando os Dados
 dados <- read.csv("dados_para_o_R.csv") # nolint
 head(dados)
+```
 
+Criando uma tabela para guardar as métricas dos modelos gerados
+```{r}
 # criando tibble para comparar modelos:
 models_tibble <- tibble(modelo = c("glm", "ridge", "LASSO", 
                                    "Arv.Decisão", "Rd.Forest"),
-                        Accuracy = NA * length(modelo), Precision = NA * length(modelo), ROC_Curve = NA * length(modelo))
+                        Accuracy = NA * length(modelo), Precision = NA * length(modelo), ROC_Curve = NA * length(modelo),
+                        FP = NA * length(modelo), FN = NA * length(modelo))
 models_tibble
+```
+Criando uma lista e uma função para as curvas ROC do modelo:
+```{r}
 
-# Definindo a função para calcular as métricas e salvar no models_tibble
+# Função para calcular e armazenar as curvas ROC
+calcular_roc <- function(truth, prob, modelo_nome) {
+  roc_obj <- roc(truth, prob)
+  data.frame(
+    tpr = roc_obj$sensitivities,   # True positive rate (sensibilidade)
+    fpr = 1 - roc_obj$specificities, # False positive rate (1 - especificidade)
+    modelo = modelo_nome
+  )
+}
+
+# Lista para armazenar todas as curvas ROC
+roc_list <- list()
+```
+
+Criando uma função para adicionar os resultados das funções na tabela:
+```{r}
 adiciona_tabela <- function(modelo_nome, resultados, models_tibble) {
   
   # Reordenando os níveis da variável 'truth'
   resultados$truth <- factor(resultados$truth, levels = c(1, 0))
   # Reordenando os níveis da variável 'estimate' para corresponder a 'truth'
   resultados$estimate <- factor(resultados$estimate, levels = c(1, 0))
-
-
   
-  # Calculando as métricas
+  # Calculando a matriz de confusão para FP e FN
+  conf_matrix <- table(resultados$truth, resultados$estimate)
+  
+  # Extraindo falsos positivos (0 predito como 1) e falsos negativos (1 predito como 0)
+  false_positives <- conf_matrix["0", "1"]
+  false_negatives <- conf_matrix["1", "0"]
+  
+  # Calculando o número total de previsões
+  total_previsoes <- sum(conf_matrix)
+  
+  # Calculando as porcentagens de FP e FN
+  fp_percent <- (false_positives / total_previsoes) * 100
+  fn_percent <- (false_negatives / total_previsoes) * 100
+  
+  # Calculando as métricas existentes
   accuracy_result <- yardstick::accuracy(resultados, truth = truth, estimate = estimate)
   precision_result <- yardstick::precision(resultados, truth = truth, estimate = estimate)
   roc_auc_result <- yardstick::roc_auc(resultados, truth = truth, .pred_1)
   
-  # Atualizando a tabela models_tibble com os resultados
+  # Adicionando novas métricas (FP e FN em %) à tabela models_tibble
   models_tibble$Accuracy[models_tibble$modelo == modelo_nome] <- accuracy_result$.estimate
   models_tibble$Precision[models_tibble$modelo == modelo_nome] <- precision_result$.estimate
   models_tibble$ROC_Curve[models_tibble$modelo == modelo_nome] <- roc_auc_result$.estimate
+  
+ 
+  # Atualizando os valores de FP e FN (em %)
+  models_tibble$FP[models_tibble$modelo == modelo_nome] <- fp_percent
+  models_tibble$FN[models_tibble$modelo == modelo_nome] <- fn_percent
   
   # Retornando a tabela atualizada
   return(models_tibble)
 }
 
+```
+
+Criando nosso "Sarrafo", nosso limiar de decisão de quando a probabilidade de classe definirá ou não a classe predita
+```{r}
 #sarrafo universal para classificação de todos os modelos
-sarrafo <- 0.5
+sarrafo <- 0.7
+```
+
+Separando os dados em treino e teste e ordenando as variaveis resposta
+```{r}
 
 # Separando os dados em treino e teste
-split <- initial_split(dados, prop = 0.8)
+split <- initial_split(dados, prop = 0.7)
 treinamento <- training(split)
 teste <- testing(split)
 
 treinamento$operates_within_2_years <- factor(treinamento$operates_within_2_years, levels = c(0, 1))
 teste$operates_within_2_years <- factor(teste$operates_within_2_years, levels = c(0, 1))
+```
+
+A partir daqui geraremos os modelos com base nos dados
+
+O primeiro modelo será a regressão logística:
+```{r}
 
 # i) regressão logistica ----------------------------------------------------------
 
@@ -97,6 +157,15 @@ resultados <- tibble(
 # Atualizando a tabela models_tibble
 models_tibble <- adiciona_tabela("glm", resultados, models_tibble)
 
+roc_logistic <- calcular_roc(resultados$truth, resultados$.pred_1, "GLM")
+roc_list[[1]] <- roc_logistic
+```
+```{r}
+vip(cv_logistic)
+```
+
+Em seguida faremos a regressão ridge:
+```{r}
 # ii) regressão ridge ----------------------------------------------------------
 
 # Convertendo as variáveis preditoras e resposta para matriz
@@ -136,6 +205,16 @@ resultados <- tibble(
 )
 
 models_tibble <- adiciona_tabela("ridge", resultados, models_tibble)
+
+roc_ridge <- calcular_roc(resultados$truth, resultados$.pred_1, "Ridge")
+roc_list[[2]] <- roc_ridge
+```
+```{r}
+vip(ridge_model)
+```
+
+regressão LASSO:
+```{r}
 # iii) regressão LASSO ---------------------------------------------------------
 
 
@@ -168,22 +247,26 @@ resultados <- tibble(
 
 models_tibble <- adiciona_tabela("LASSO", resultados, models_tibble)
 
+roc_lasso <- calcular_roc(resultados$truth, resultados$.pred_1, "LASSO")
+roc_list[[3]] <- roc_lasso
+```
+```{r}
+vip(lasso_model)
+```
 
-
+Arvore de Decisão:
+```{r}
 # iv) árvore de decisão ------------------------------------------
 library(rpart.plot)
 tree <- rpart(operates_within_2_years ~ ., data = treinamento, method = "class")
 
 # Visualizando a árvore e o gráfico de CP
-windows()
 rpart.plot(tree, roundint = FALSE)
-windows()
 plotcp(tree)
 
 # Encontrando o CP ótimo e podando a árvore
 cp_ot <- tree$cptable[which.min(tree$cptable[, "xerror"]), "CP"]
 tree <- prune(tree, cp = cp_ot)
-windows()
 rpart.plot(tree, roundint = FALSE)
 
 # Fazendo previsões no conjunto de teste
@@ -205,6 +288,14 @@ resultados <- tibble(
 # Calculando a AUC da curva ROC
 models_tibble <- adiciona_tabela("Arv.Decisão", resultados, models_tibble)
 
+roc_arvore <- calcular_roc(resultados$truth, resultados$.pred_1, "Arvore de Decisão")
+roc_list[[4]] <- roc_arvore
+```
+```{r}
+vip(tree)
+```
+Floresta Aleatória:
+```{r}
 # v) floresta aleatória ------------------------------------------
 library(ranger)
 
@@ -267,5 +358,29 @@ resultados_cv <- bind_rows(results_list)
 # Atualizando a tabela models_tibble com os resultados da validação cruzada
 models_tibble <- adiciona_tabela("Rd.Forest", resultados_cv, models_tibble)
 
-vip(rd_forest_model) + windows()
+roc_forest <- calcular_roc(resultados$truth, resultados$.pred_1, "Floresta Aleatória")
+roc_list[[5]] <- roc_forest
+```
+```{r}
+vip(rd_forest_model)
+```
+
+Mostrando a tabela com os resultados:
+```{r}
 models_tibble
+```
+
+
+Plotando todas as curvas ROC:
+```{r}
+# Combinando todas as curvas ROC em um único data frame
+roc_data <- do.call(rbind, roc_list)
+
+# Plotando as curvas ROC
+ggplot(roc_data, aes(x = fpr, y = tpr, color = modelo)) +
+  geom_line(size = 1) +
+  geom_abline(linetype = "dashed") +  # Linha diagonal para referência
+  labs(x = "False Positive Rate (1 - Specificity)", y = "True Positive Rate (Sensitivity)", 
+       title = "Curvas ROC de Todos os Modelos") +
+  theme_minimal()
+```
