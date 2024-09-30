@@ -298,26 +298,21 @@ vip(tree)
 ```
 Floresta Aleatória:
 ```{r}
-# v) floresta aleatória ------------------------------------------
+# sugestão de RMD usando programação funcional:
+
 library(ranger)
+library(purrr)
+library(tidymodels)
 
 # Criando folds de validação cruzada a partir do conjunto de treinamento
 folds <- vfold_cv(treinamento, v = 5, strata = operates_within_2_years)
 
-# Inicializando uma lista para armazenar os resultados
-results_list <- list()
-
-# Loop sobre cada fold
-for (i in seq_along(folds$splits)) {
-  
-  # Extraindo o split atual
-  split <- folds$splits[[i]]
-  
-  # Obtendo os dados de treinamento e validação para este fold
+# Função para treinamento, previsão e armazenamento de resultados
+train_and_predict <- function(split, sarrafo) {
   train_data <- analysis(split)
   valid_data <- assessment(split)
   
-  # Treinando o modelo no conjunto de treinamento com probability = TRUE
+  # Treinando o modelo
   rd_forest_model <- ranger(
     dependent.variable.name = "operates_within_2_years",
     data = train_data,
@@ -325,34 +320,25 @@ for (i in seq_along(folds$splits)) {
     mtry = floor(sqrt(ncol(train_data) - 1)),
     importance = 'impurity',
     seed = 123,
-    probability = TRUE  # Importante para obter probabilidades
+    probability = TRUE
   )
   
   # Fazendo previsões no conjunto de validação
   predictions <- predict(rd_forest_model, data = valid_data)
-  
-  # Verificando se predictions$predictions é uma matriz
-  if (is.matrix(predictions$predictions)) {
-    # Acessando a coluna correspondente à classe "1"
-    y_pred_prob <- predictions$predictions[, "1"]
-  } else {
-    # Caso contrário, acessamos a probabilidade diretamente
-    y_pred_prob <- predictions$predictions
-  }
-  
+  y_pred_prob <- if (is.matrix(predictions$predictions)) predictions$predictions[, "1"] else predictions$predictions
   y_pred <- as.factor(ifelse(y_pred_prob > sarrafo, 1, 0))
-  
   y_real <- as.factor(valid_data$operates_within_2_years)
   
-  # Armazenando os resultados em um tibble
-  resultados <- tibble(
-    truth = y_real,       # Valores reais
-    estimate = y_pred,    # Valores previstos
-    .pred_1 = y_pred_prob # Probabilidades previstas para a classe '1'
+  # Retornando os resultados como tibble
+  tibble(
+    truth = y_real,
+    estimate = y_pred,
+    .pred_1 = y_pred_prob
   )
-  
-  results_list[[i]] <- resultados
 }
+
+# Aplicando a função a todos os splits
+results_list <- map(folds$splits, ~ train_and_predict(.x, sarrafo))
 
 # Combinando os resultados de todos os folds
 resultados_cv <- bind_rows(results_list)
@@ -360,7 +346,8 @@ resultados_cv <- bind_rows(results_list)
 # Atualizando a tabela models_tibble com os resultados da validação cruzada
 models_tibble <- adiciona_tabela("Rd.Forest", resultados_cv, models_tibble)
 
-roc_forest <- calcular_roc(resultados$truth, resultados$.pred_1, "Floresta Aleatória")
+# Calculando e armazenando o ROC
+roc_forest <- calcular_roc(resultados_cv$truth, resultados_cv$.pred_1, "Floresta Aleatória")
 roc_list[[5]] <- roc_forest
 ```
 
@@ -447,6 +434,7 @@ cat("F1 Score:", round(f1, 4), "\n")
 cat("AUC:", round(auc_value, 4), "\n")
 
 ```
+
 Mostrando a tabela com os resultados:
 ```{r}
 models_tibble
